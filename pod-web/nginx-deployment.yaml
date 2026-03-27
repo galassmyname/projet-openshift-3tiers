@@ -34,6 +34,7 @@ data:
 
   nginx.conf: |
     server {
+      # Port 8080 car nginxinc/nginx-unprivileged écoute sur 8080 par défaut
       listen 8080;
       location / {
         root /usr/share/nginx/html;
@@ -60,7 +61,8 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: nginx:alpine
+          # Cette image est faite pour tourner sans root (parfait pour OpenShift)
+          image: nginxinc/nginx-unprivileged:alpine
           ports:
             - containerPort: 8080
           volumeMounts:
