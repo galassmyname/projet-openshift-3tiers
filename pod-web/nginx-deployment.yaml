@@ -4,6 +4,7 @@ metadata:
   name: nginx-html
   namespace: galassmyname-dev
 data:
+  # Page HTML statique du site web
   index.html: |
     <!DOCTYPE html>
     <html lang="fr">
@@ -51,25 +52,14 @@ spec:
     spec:
       containers:
         - name: nginx
+          # Image Nginx non-privilégiée pour OpenShift (tourne sans root)
           image: nginxinc/nginx-unprivileged:alpine
           ports:
             - containerPort: 8080
-          # Variables d'environnement pour que nginx écrive dans /tmp
-          env:
-            - name: NGINX_ENTRYPOINT_QUIET_LOGS
-              value: "1"
           volumeMounts:
-            # Monter uniquement le HTML, pas la config
             - name: html-volume
               mountPath: /usr/share/nginx/html/index.html
               subPath: index.html
-            # Dossier temporaire pour que nginx puisse écrire ses fichiers cache
-            - name: tmp-volume
-              mountPath: /tmp
-            - name: cache-volume
-              mountPath: /var/cache/nginx
-            - name: run-volume
-              mountPath: /var/run
       volumes:
         - name: html-volume
           configMap:
@@ -77,13 +67,6 @@ spec:
             items:
               - key: index.html
                 path: index.html
-        # Volumes temporaires en mémoire pour les permissions nginx
-        - name: tmp-volume
-          emptyDir: {}
-        - name: cache-volume
-          emptyDir: {}
-        - name: run-volume
-          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -108,5 +91,4 @@ spec:
     name: nginx-service
   port:
     targetPort: 8080
-  tls:
-    termination: edge
+  # TLS désactivé pour simplifier, mais on pourrait l'activer avec "edge"

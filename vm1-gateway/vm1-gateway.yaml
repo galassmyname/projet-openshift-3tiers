@@ -1,0 +1,93 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: vm1-gateway
+  namespace: galassmyname-dev
+  labels:
+    app: gateway
+spec:
+  # runStrategy: Always → La VM démarre automatiquement au lancement du cluster
+  runStrategy: Always
+  # DataVolumeTemplate : crée un disque persistant de 30GB depuis l'image Fedora
+  dataVolumeTemplates:
+    - metadata:
+        name: vm1-gateway-disk
+      spec:
+        storage:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 30Gi
+        sourceRef:
+          kind: DataSource
+          name: fedora
+          namespace: openshift-virtualization-os-images
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      domain:
+        cpu:
+          cores: 1
+        memory:
+          guest: 1Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}  # Masquerade = NAT pour l'accès internet
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: vm1-gateway-disk
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              # Utilisateur par défaut du template Fedora
+              user: fedora
+              password: Admin1234!
+              chpasswd:
+                expire: false
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              
+              # Paquets à installer au démarrage
+              packages:
+                - iptables
+                - iptables-services
+              
+              runcmd:
+                # 1. Activer le forwarding IP (permet à la VM de router le trafic)
+                - echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+                - sysctl -p
+                
+                # 2. NAT (Masquerade) : les machines internes sortent sur internet via enp1s0
+                - iptables-legacy -t nat -A POSTROUTING -o enp1s0 -j MASQUERADE
+                
+                # 3. Autoriser le trafic forward (nécessaire pour le routage)
+                - iptables-legacy -A FORWARD -i enp1s0 -o enp1s0 -m state --state NEW,ESTABLISHED,RELATED -j ACCEPT
+                
+                # 4. Bloquer tout accès direct depuis Internet vers le LAN MySQL
+                #    (192.168.10.0/24 est le réseau LAN théorique)
+                - iptables-legacy -A FORWARD -i enp1s0 -d 192.168.10.0/24 -j DROP
+                
+                # 5. Bloquer tout accès depuis la DMZ (pod web) vers le LAN MySQL
+                #    (192.168.100.0/24 est le réseau DMZ théorique)
+                - iptables-legacy -A FORWARD -s 192.168.100.0/24 -d 192.168.10.0/24 -j DROP
+                
+                # 6. Sauvegarder les règles pour qu'elles persistent après reboot
+                - systemctl enable iptables
+                - systemctl start iptables
+                - service iptables save

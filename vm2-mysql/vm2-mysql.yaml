@@ -1,0 +1,94 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: vm2-mysql
+  namespace: galassmyname-dev
+  labels:
+    app: mysql
+spec:
+  runStrategy: Always
+  dataVolumeTemplates:
+    - metadata:
+        name: vm2-mysql-disk
+      spec:
+        storage:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 30Gi
+        sourceRef:
+          kind: DataSource
+          name: fedora
+          namespace: openshift-virtualization-os-images
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      domain:
+        cpu:
+          cores: 1
+        memory:
+          guest: 2Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: rootdisk
+          dataVolume:
+            name: vm2-mysql-disk
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |
+              #cloud-config
+              user: fedora
+              password: Admin1234!
+              chpasswd:
+                expire: false
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              shell: /bin/bash
+              
+              packages:
+                - mysql-server
+                - iptables
+                - iptables-services
+              
+              runcmd:
+                # 1. Démarrer MySQL
+                - systemctl enable mysqld
+                - systemctl start mysqld
+                
+                # 2. Créer la base de données et l'utilisateur applicatif
+                - mysql -e "CREATE DATABASE IF NOT EXISTS appdb;"
+                - mysql -e "CREATE USER IF NOT EXISTS 'appuser'@'%' IDENTIFIED BY 'apppassword';"
+                - mysql -e "GRANT ALL PRIVILEGES ON appdb.* TO 'appuser'@'%';"
+                - mysql -e "FLUSH PRIVILEGES;"
+                
+                # 3. Créer une table de test avec des données
+                - mysql appdb -e "CREATE TABLE IF NOT EXISTS test (id INT AUTO_INCREMENT PRIMARY KEY, message VARCHAR(255));"
+                - mysql appdb -e "INSERT INTO test (message) VALUES ('Hello depuis MySQL VM2');"
+                
+                # 4. Configurer MySQL pour écouter sur toutes les interfaces (pour le LAN)
+                - sed -i 's/bind-address.*/bind-address = 0.0.0.0/' /etc/my.cnf.d/mysql-server.cnf
+                - systemctl restart mysqld
+                
+                # 5. Règles iptables : MySQL accessible SEULEMENT depuis le réseau interne 10.0.0.0/8
+                - iptables-legacy -A INPUT -p tcp --dport 3306 -s 10.0.0.0/8 -j ACCEPT
+                - iptables-legacy -A INPUT -p tcp --dport 3306 -j DROP
+                
+                # 6. Sauvegarder les règles
+                - systemctl enable iptables
+                - systemctl start iptables
+                - service iptables save
